@@ -1,6 +1,6 @@
 import asyncio
 from typing import List
-from repl_framework import PyREPL
+from pyrepl import PyREPL
 from rich import print as rprint
 from pathlib import Path
 import typer
@@ -73,8 +73,5 @@ async def process(tokens: List[str]):
     rprint(f"[bold blue]\[Worker][/bold blue] Finished process for: {tokens}")
 
 if __name__ == "__main__":
-    # Run the REPL in an asyncio event loop
-    try:
-        asyncio.run(repl.run())
-    except KeyboardInterrupt:
-        pass
+    # The framework handles its own event loop within curses.wrapper
+    repl.run()
