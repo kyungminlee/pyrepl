@@ -166,6 +166,18 @@ class PyREPL:
         self.stdscr = stdscr
         curses.curs_set(1)
         stdscr.nodelay(True)
+        
+        # Initialize colors
+        if curses.has_colors():
+            curses.start_color()
+            curses.use_default_colors()
+            # Pair 1: Selected item (Black on Cyan)
+            curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)
+            # Pair 2: Header (Yellow)
+            curses.init_pair(2, curses.COLOR_YELLOW, -1)
+            # Pair 3: Dim/Separator (White/Grey)
+            curses.init_pair(3, 244 if curses.COLORS >= 256 else curses.COLOR_WHITE, -1)
+        
         self.sh, self.sw = stdscr.getmaxyx()
         self.console.width = self.sw
         self.running = True
@@ -188,7 +200,10 @@ class PyREPL:
                 if 0 <= idx < len(self.fallback_buffer):
                     try: stdscr.addstr(i, 0, self.fallback_buffer[idx][:self.sw-1])
                     except curses.error: pass
-            try: stdscr.addstr(SEPARATOR_ROW, 0, "─" * self.sw, curses.A_DIM)
+            
+            try:
+                attr = curses.color_pair(3) if curses.has_colors() else curses.A_DIM
+                stdscr.addstr(SEPARATOR_ROW, 0, "─" * self.sw, attr)
             except curses.error: pass
             
             q_height = min(len(self.pending_queue), 5) if self.mode in (REPLMode.QUEUE, REPLMode.EDIT_QUEUE) else 0
@@ -204,17 +219,22 @@ class PyREPL:
 
             popup_start = SEPARATOR_ROW + 1 + repl_msg_height
             if self.mode == REPLMode.COMPLETE:
-                try: stdscr.addstr(popup_start, 0, "--- COMPLETIONS (Tab: next, Enter: select) ---"[:self.sw-1], curses.A_DIM)
+                header_attr = curses.color_pair(2) if curses.has_colors() else curses.A_BOLD
+                try: stdscr.addstr(popup_start, 0, "--- COMPLETIONS (Tab: next, Enter: select) ---"[:self.sw-1], header_attr)
                 except curses.error: pass
                 for i in range(c_height):
                     window_off = max(0, min(completion_select_idx - 2, len(completion_candidates) - c_height))
                     idx = window_off + i
                     if idx < len(completion_candidates):
-                        attr = curses.A_REVERSE if idx == completion_select_idx else curses.A_NORMAL
+                        if idx == completion_select_idx:
+                            attr = curses.color_pair(1) if curses.has_colors() else curses.A_REVERSE
+                        else:
+                            attr = curses.A_NORMAL
                         try: stdscr.addstr(popup_start + 1 + i, 0, f" > {completion_candidates[idx]}"[:self.sw-1], attr)
                         except curses.error: pass
             elif q_height > 0:
-                try: stdscr.addstr(popup_start, 0, "--- PENDING QUEUE (x: delete, e: edit) ---"[:self.sw-1], curses.A_DIM)
+                header_attr = curses.color_pair(2) if curses.has_colors() else curses.A_BOLD
+                try: stdscr.addstr(popup_start, 0, "--- PENDING QUEUE (x: delete, e: edit) ---"[:self.sw-1], header_attr)
                 except curses.error: pass
                 for i in range(q_height):
                     window_off = max(0, min(queue_select_idx - 2, len(self.pending_queue) - q_height))
@@ -222,7 +242,10 @@ class PyREPL:
                     if idx < len(self.pending_queue):
                         tokens = self.pending_queue[idx]
                         cmd_str = " ".join(tokens)
-                        attr = curses.A_REVERSE if idx == queue_select_idx else curses.A_NORMAL
+                        if idx == queue_select_idx:
+                            attr = curses.color_pair(1) if curses.has_colors() else curses.A_REVERSE
+                        else:
+                            attr = curses.A_NORMAL
                         try: stdscr.addstr(popup_start + 1 + i, 0, f" Q{idx}: {cmd_str}"[:self.sw-1], attr)
                         except curses.error: pass
 
