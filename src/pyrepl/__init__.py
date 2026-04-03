@@ -88,7 +88,7 @@ class PyREPL:
                         usage = " ".join(params)
 
                     self._print(f"[bold green]Usage:[/bold green] [yellow]{search_name} {usage}[/yellow]")
-                    self._print(f"[bold cyan]Help for {search_name}:[/bold cyan]")
+                    self._print("")
                     
                     # Short description
                     if target_cmd.help:
