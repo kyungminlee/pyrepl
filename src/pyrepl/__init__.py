@@ -91,7 +91,7 @@ class PyREPL:
     def _draw_line(self, stdscr, y: int, x: int, text: Text):
         """Render a Rich Text object to curses with attributes."""
         current_x = x
-        for segment in text.render_list():
+        for segment in text.render(self.console):
             content = segment.text
             style = segment.style
             attr = curses.A_NORMAL
