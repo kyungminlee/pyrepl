@@ -56,24 +56,87 @@ class PyREPL:
         def exit_repl():
             self.running = False
 
-        @self.app.command(name=".help", help="List all available dot-commands or show detailed help.")
-        def show_help(command_name: Optional[str] = typer.Argument(None, show_default=False)):
+        @self.app.command(name=".help", help="List all available dot-commands or show detailed help for a specific command.")
+        def show_help(command_name: Optional[str] = typer.Argument(None, help="The command to show help for (with or without the dot).", show_default=False)):
             import click
+            
             if command_name:
+                # Normalize command name to start with a dot
                 search_name = command_name if command_name.startswith('.') else f".{command_name}"
+                
                 target_cmd = next((c for c in self.app.registered_commands if (c.name or f".{c.callback.__name__.replace('_', '-')}") == search_name), None)
+                
                 if target_cmd:
                     self._print(f"[bold cyan]Help for {search_name}:[/bold cyan]")
-                    if target_cmd.help: self._print(f"[bold green]Description:[/bold green] {target_cmd.help}")
+                    
+                    # Short description
+                    if target_cmd.help:
+                        self._print(f"[bold green]Description:[/bold green] {target_cmd.help}")
+                    
+                    # Detailed help (from the full docstring)
                     doc = target_cmd.callback.__doc__
-                    if doc: self._print(f"\n[bold green]Details:[/bold green]\n{doc.strip()}")
+                    if doc:
+                        self._print(f"\n[bold green]Details:[/bold green]\n{doc.strip()}")
+                    
+                    # Usage
+                    click_cmd = getattr(target_cmd.callback, "click_command", None)
+                    if not click_cmd:
+                        from typer.main import get_command
+                        root_click_cmd = get_command(self.app)
+                        if isinstance(root_click_cmd, click.Group):
+                            click_cmd = root_click_cmd.get_command(click.Context(root_click_cmd), search_name)
+                    
+                    if click_cmd:
+                        params = []
+                        for param in click_cmd.params:
+                            if isinstance(param, click.Argument):
+                                arg_name = param.name.upper()
+                                if not param.required: params.append(f"[{arg_name}]")
+                                else: params.append(arg_name)
+                            elif isinstance(param, click.Option) and not param.hidden:
+                                if "[OPTIONS]" not in params: params.append("[OPTIONS]")
+                        usage = " ".join(params)
+                        self._print(f"\n[bold green]Usage:[/bold green] {search_name} {usage}")
+                        
+                        # Show parameter details if any
+                        if click_cmd.params:
+                            self._print("\n[bold green]Arguments & Options:[/bold green]")
+                            for param in click_cmd.params:
+                                if isinstance(param, click.Option):
+                                    opts = "/".join(param.opts)
+                                    self._print(f"  {opts:20} {param.help or ''}")
+                                else:
+                                    self._print(f"  {param.name.upper():20} {param.help or ''}")
                 else:
                     self._print(f"[bold red]Unknown command: {command_name}[/bold red]")
                 return
+
             self._print("[bold cyan]Available dot-commands:[/bold cyan]")
             for command in self.app.registered_commands:
                 name = command.name or f".{command.callback.__name__.replace('_', '-')}"
-                self._print(f"  [bold green]{name:15}[/bold green] - {command.help or ''}")
+                
+                # Get usage summary for list view
+                click_cmd = getattr(command.callback, "click_command", None)
+                if not click_cmd:
+                    from typer.main import get_command
+                    root_click_cmd = get_command(self.app)
+                    if isinstance(root_click_cmd, click.Group):
+                        click_cmd = root_click_cmd.get_command(click.Context(root_click_cmd), name)
+                
+                usage = ""
+                if click_cmd:
+                    params = []
+                    for param in click_cmd.params:
+                        if isinstance(param, click.Argument):
+                            arg_name = param.name.upper()
+                            if not param.required: params.append(f"[{arg_name}]")
+                            else: params.append(arg_name)
+                        elif isinstance(param, click.Option) and not param.hidden:
+                            if "[OPTIONS]" not in params: params.append("[OPTIONS]")
+                    usage = " ".join(params)
+
+                help_text = command.help or "No help message provided."
+                self._print(f"  [bold green]{name:15}[/bold green] [yellow]{usage:20}[/yellow] - {help_text}")
 
     def _print(self, msg: Union[str, Text], target: str = "repl"):
         """Append a message to either the 'repl' or 'fallback' buffer with color support."""
