@@ -1,9 +1,9 @@
+import asyncio
 from typing import List
 from repl_framework import PyREPL
 from rich import print as rprint
 from pathlib import Path
 import typer
-
 import subprocess
 
 # Initialize the REPL
@@ -16,8 +16,6 @@ def shell(args: List[str] = typer.Argument(..., help="The shell command and its 
     Example: .shell ls -la
     """
     try:
-        # Using subprocess.run is the modern, recommended way.
-        # Passing a list of strings is safer than a single string with shell=True.
         result = subprocess.run(args, capture_output=False, text=True)
         if result.returncode != 0:
             rprint(f"[bold red]Command exited with code {result.returncode}[/bold red]")
@@ -58,10 +56,25 @@ def greet(
         msg = msg.upper()
     rprint(f"[bold green]{msg}[/bold green]")
 
+@repl.command(name=".add", description="Add two numbers.")
+def add_numbers(a: int, b: int):
+    rprint(f"[bold yellow]{a} + {b} = {a + b}[/bold yellow]")
+
+# Register an ASYNC fallback handler
 @repl.on_fallback
-def process(tokens: List[str]):
-    """Default handler for non-dot commands."""
-    rprint(f"Fallback tokens: [bold magenta]{tokens}[/bold magenta]")
+async def process(tokens: List[str]):
+    """
+    Default handler for non-dot commands.
+    Runs asynchronously in a background worker.
+    """
+    rprint(f"[bold blue]\[Worker][/bold blue] Starting process for: {tokens}")
+    # Simulate a long-running task
+    await asyncio.sleep(3)
+    rprint(f"[bold blue]\[Worker][/bold blue] Finished process for: {tokens}")
 
 if __name__ == "__main__":
-    repl.run()
+    # Run the REPL in an asyncio event loop
+    try:
+        asyncio.run(repl.run())
+    except KeyboardInterrupt:
+        pass

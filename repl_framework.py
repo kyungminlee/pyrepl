@@ -2,8 +2,9 @@ import shlex
 import typer
 import sys
 import os
+import asyncio
 from pathlib import Path
-from typing import List, Callable, Optional, Any, Dict, Type
+from typing import List, Callable, Optional, Any, Dict, Type, Union, Coroutine
 from rich import print as rprint
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
@@ -102,8 +103,9 @@ class PyREPL:
     def __init__(self, prompt: str = "pyrepl> "):
         self.app = typer.Typer(add_completion=False)
         self.prompt = prompt
-        self.fallback: Optional[Callable[[List[str]], Any]] = None
+        self.fallback: Optional[Union[Callable[[List[str]], Any], Callable[[List[str]], Coroutine[Any, Any, Any]]]] = None
         self.session = PromptSession(completer=REPLCompleter(self.app))
+        self.queue: asyncio.Queue = asyncio.Queue()
         
         @self.app.command(name=".exit", help="Exit the REPL.")
         def exit_repl():
@@ -115,9 +117,7 @@ class PyREPL:
             import click
             
             if command_name:
-                # Normalize command name to start with a dot
                 search_name = command_name if command_name.startswith('.') else f".{command_name}"
-                
                 target_cmd = None
                 for cmd in self.app.registered_commands:
                     name = cmd.name or f".{cmd.callback.__name__.replace('_', '-')}"
@@ -127,17 +127,13 @@ class PyREPL:
                 
                 if target_cmd:
                     rprint(f"[bold cyan]Help for {search_name}:[/bold cyan]")
-                    
-                    # Short description (from decorator or first line of docstring)
                     if target_cmd.help:
                         rprint(f"[bold green]Description:[/bold green] {target_cmd.help}")
                     
-                    # Detailed help (from the full docstring)
                     doc = target_cmd.callback.__doc__
                     if doc:
                         rprint(f"\n[bold green]Details:[/bold green]\n{doc.strip()}")
                     
-                    # Usage
                     click_cmd = getattr(target_cmd.callback, "click_command", None)
                     if not click_cmd:
                         from typer.main import get_command
@@ -160,7 +156,6 @@ class PyREPL:
                         usage = " ".join(params)
                         rprint(f"\n[bold green]Usage:[/bold green] {search_name} {usage}")
                         
-                        # Show parameter details if any
                         if click_cmd.params:
                             rprint("\n[bold green]Arguments & Options:[/bold green]")
                             for param in click_cmd.params:
@@ -176,25 +171,19 @@ class PyREPL:
             rprint("[bold cyan]Available dot-commands:[/bold cyan]")
             for command in self.app.registered_commands:
                 name = command.name or f".{command.callback.__name__.replace('_', '-')}"
-                
-                # Get the click command to extract usage
                 click_cmd = getattr(command.callback, "click_command", None)
                 if not click_cmd:
                     from typer.main import get_command
                     root_click_cmd = get_command(self.app)
                     if isinstance(root_click_cmd, click.Group):
                         click_cmd = root_click_cmd.get_command(click.Context(root_click_cmd), name)
-                    else:
-                        click_cmd = root_click_cmd
                 
                 usage = ""
                 if click_cmd:
-                    # Build a simple usage string: .cmd [OPTIONS] ARG1 ARG2
                     params = []
                     for param in click_cmd.params:
                         if isinstance(param, click.Argument):
                             arg_name = param.name.upper()
-                            # If the argument is optional (has a default or is not required)
                             if not param.required:
                                 params.append(f"[{arg_name}]")
                             else:
@@ -205,25 +194,35 @@ class PyREPL:
                     usage = " ".join(params)
 
                 help_text = command.help or "No help message provided."
-                rprint(f"  [bold green]{name:15}[/bold green] [yellow]{usage:20}[/yellow] - {help_text}")
+                rprint(f"  [bold green]{name:15}[/bold green] [yellow]{usage:25}[/yellow] - {help_text}")
 
     def command(self, name: Optional[str] = None, description: Optional[str] = None, **kwargs):
-        """
-        Decorator to register a dot-command.
-        If name is not provided, the function name will be used (with a leading dot).
-        'description' is used as the help text.
-        """
         def decorator(func: Callable):
             cmd_name = name if name else f".{func.__name__.replace('_', '-')}"
-            # Priority: decorator 'description' arg -> func docstring
             help_text = description or func.__doc__
             self.app.command(name=cmd_name, help=help_text, **kwargs)(func)
             return func
         return decorator
 
-    def on_fallback(self, func: Callable[[List[str]], Any]):
+    def on_fallback(self, func: Union[Callable[[List[str]], Any], Callable[[List[str]], Coroutine[Any, Any, Any]]]):
         self.fallback = func
         return func
+
+    async def _worker(self):
+        """Background worker to process fallback commands from the queue."""
+        while True:
+            tokens = await self.queue.get()
+            try:
+                if self.fallback:
+                    if asyncio.iscoroutinefunction(self.fallback):
+                        await self.fallback(tokens)
+                    else:
+                        # Run sync fallback in a thread to avoid blocking the event loop
+                        await asyncio.to_thread(self.fallback, tokens)
+            except Exception as e:
+                rprint(f"[bold red]Process error:[/bold red] {e}")
+            finally:
+                self.queue.task_done()
 
     def _run_dot_command(self, tokens: List[str]):
         try:
@@ -235,11 +234,16 @@ class PyREPL:
         except Exception as e:
             rprint(f"[bold red]Error:[/bold red] {e}")
 
-    def run(self):
+    async def run(self):
+        # Start background worker
+        worker_task = asyncio.create_task(self._worker())
+        
         rprint("[bold green]REPL started. Type '.help' for commands.[/bold green]")
         while True:
             try:
-                line = self.session.prompt(self.prompt).strip()
+                # Use prompt_async to allow other tasks (like the worker) to run
+                line = await self.session.prompt_async(self.prompt)
+                line = line.strip()
                 if not line:
                     continue
                 
@@ -253,17 +257,17 @@ class PyREPL:
                     continue
 
                 if tokens[0].startswith('.'):
+                    # Run dot commands synchronously as requested
                     self._run_dot_command(tokens)
                 else:
                     if self.fallback:
-                        try:
-                            self.fallback(tokens)
-                        except Exception as e:
-                            rprint(f"[bold red]Process error:[/bold red] {e}")
+                        # Queue the fallback command
+                        await self.queue.put(tokens)
                     else:
                         rprint(f"[yellow]No handler for input: {line}[/yellow]")
             except (EOFError, KeyboardInterrupt):
                 rprint("\n[bold blue]Goodbye![/bold blue]")
+                worker_task.cancel()
                 break
             except Exception as e:
                 rprint(f"[bold red]An unexpected error occurred:[/bold red] {e}")
