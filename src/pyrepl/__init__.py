@@ -67,18 +67,7 @@ class PyREPL:
                 target_cmd = next((c for c in self.app.registered_commands if (c.name or f".{c.callback.__name__.replace('_', '-')}") == search_name), None)
                 
                 if target_cmd:
-                    self._print(f"[bold cyan]Help for {search_name}:[/bold cyan]")
-                    
-                    # Short description
-                    if target_cmd.help:
-                        self._print(f"[bold green]Description:[/bold green] {target_cmd.help}")
-                    
-                    # Detailed help (from the full docstring)
-                    doc = target_cmd.callback.__doc__
-                    if doc:
-                        self._print(f"\n[bold green]Details:[/bold green]\n{doc.strip()}")
-                    
-                    # Usage
+                    # Pre-calculate usage for the first line
                     click_cmd = getattr(target_cmd.callback, "click_command", None)
                     if not click_cmd:
                         from typer.main import get_command
@@ -86,6 +75,7 @@ class PyREPL:
                         if isinstance(root_click_cmd, click.Group):
                             click_cmd = root_click_cmd.get_command(click.Context(root_click_cmd), search_name)
                     
+                    usage = ""
                     if click_cmd:
                         params = []
                         for param in click_cmd.params:
@@ -96,7 +86,13 @@ class PyREPL:
                             elif isinstance(param, click.Option) and not param.hidden:
                                 if "[OPTIONS]" not in params: params.append("[OPTIONS]")
                         usage = " ".join(params)
-                        self._print(f"\n[bold green]Usage:[/bold green] {search_name} {usage}")
+
+                    self._print(f"[bold green]Usage:[/bold green] [yellow]{search_name} {usage}[/yellow]")
+                    self._print(f"[bold cyan]Help for {search_name}:[/bold cyan]")
+                    
+                    # Short description
+                    if target_cmd.help:
+                        self._print(f"[bold green]Description:[/bold green] {target_cmd.help}")
                         
                         # Show parameter details if any
                         if click_cmd.params:
